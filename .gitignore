@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+backoffice/node_modules/
+backoffice/.next/
+vpn_app/project/build/
+*.log
+logs/
+.db
+alembic/__pycache__/
+tests/__pycache__/
+*.egg-info/
+.pytest_cache/

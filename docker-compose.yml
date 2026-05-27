@@ -1,0 +1,161 @@
+﻿services:
+  backend:
+    build: ./backend
+    container_name: vpn_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - BACKEND_URL=${BACKEND_URL}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-30}
+      - RATE_LIMIT_PER_HOUR=${RATE_LIMIT_PER_HOUR:-500}
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/app/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - vpn_network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  db:
+    image: postgres:15
+    container_name: vpn_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=vpn_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vpn_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vpn_network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  backoffice:
+    build: ./backoffice
+    container_name: vpn_backoffice
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+    expose:
+      - "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://$(hostname -i):3000/ > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - vpn_network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  nginx:
+    build: ./nginx
+    container_name: vpn_nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      backoffice:
+        condition: service_healthy
+    networks:
+      - vpn_network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+
+  flutter_dev:
+    build: ./vpn_app
+    container_name: vpn_flutter
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./vpn_app:/app
+    command: ["tail", "-f", "/dev/null"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - vpn_network
+
+  migration:
+    build: ./backend
+    container_name: vpn_migration
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    networks:
+      - vpn_network
+    restart: "no"
+
+networks:
+  vpn_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
